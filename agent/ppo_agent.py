@@ -8,16 +8,11 @@ import torch
 import torch.nn as nn
 
 
-# ── Custom deeper network ─────────────────────────────────────
 class TrafficNet(BaseFeaturesExtractor):
-    """
-    Custom MLP: 256 → 256 → 128 with LayerNorm + ReLU.
-    Better than default 64x64 for routing decisions.
-    """
+    """256 → 256 → 128 with LayerNorm + ReLU."""
     def __init__(self, observation_space, features_dim=128):
         super().__init__(observation_space, features_dim)
         input_dim = int(np.prod(observation_space.shape))
-
         self.net = nn.Sequential(
             nn.Linear(input_dim, 256),
             nn.LayerNorm(256),
@@ -34,19 +29,17 @@ class TrafficNet(BaseFeaturesExtractor):
         return self.net(obs)
 
 
-# ── Linear learning rate schedule ────────────────────────────
-def linear_schedule(initial_lr: float, final_lr: float = 1e-5):
-    def schedule(progress: float) -> float:
-        # progress goes from 1.0 (start) to 0.0 (end)
+def linear_schedule(initial_lr, final_lr=1e-5):
+    def schedule(progress):
         return final_lr + progress * (initial_lr - final_lr)
     return schedule
 
 
-# ── Progress bar callback ─────────────────────────────────────
 class TqdmCallback(BaseCallback):
-    def __init__(self, total_timesteps, verbose=0):
+    def __init__(self, total_timesteps, phase_name="", verbose=0):
         super().__init__(verbose)
         self.total_timesteps = total_timesteps
+        self.phase_name      = phase_name
         self.pbar            = None
         self.episode_reward  = 0.0
         self.episode_count   = 0
@@ -55,7 +48,7 @@ class TqdmCallback(BaseCallback):
     def _on_training_start(self):
         self.pbar = tqdm(
             total=self.total_timesteps,
-            desc="Training",
+            desc=f"Phase [{self.phase_name}]",
             unit="step",
             dynamic_ncols=True,
             colour="green"
@@ -69,7 +62,6 @@ class TqdmCallback(BaseCallback):
             self.episode_count += 1
             if self.episode_reward > self.best_reward:
                 self.best_reward = self.episode_reward
-
             self.pbar.set_postfix({
                 "ep":     self.episode_count,
                 "reward": f"{self.episode_reward:.3f}",
@@ -78,14 +70,12 @@ class TqdmCallback(BaseCallback):
             self.logger.record("train/episode_reward", self.episode_reward)
             self.logger.record("train/episode",        self.episode_count)
             self.episode_reward = 0.0
-
         return True
 
     def _on_training_end(self):
         self.pbar.close()
 
 
-# ── PPO Agent ─────────────────────────────────────────────────
 class PPOAgent:
     def __init__(self, env, config):
         self.env    = env
@@ -95,7 +85,6 @@ class PPOAgent:
         os.makedirs("results/checkpoints", exist_ok=True)
         os.makedirs("logs",                exist_ok=True)
 
-        # Custom network policy kwargs
         policy_kwargs = dict(
             features_extractor_class  = TrafficNet,
             features_extractor_kwargs = dict(features_dim=128),
@@ -105,10 +94,7 @@ class PPOAgent:
         self.model = PPO(
             policy          = ppo_cfg["policy"],
             env             = env,
-            learning_rate   = linear_schedule(
-                                ppo_cfg["learning_rate"],
-                                final_lr=1e-5
-                              ),
+            learning_rate   = linear_schedule(ppo_cfg["learning_rate"]),
             n_steps         = ppo_cfg["n_steps"],
             batch_size      = ppo_cfg["batch_size"],
             n_epochs        = ppo_cfg["n_epochs"],
@@ -123,34 +109,68 @@ class PPOAgent:
             tensorboard_log = "logs/"
         )
 
-    def train(self, timesteps):
-        tqdm_cb = TqdmCallback(total_timesteps=timesteps, verbose=1)
+    def train_phase(self, phase, reset_timesteps=False):
+        """Train on a single curriculum phase."""
+        timesteps  = phase["timesteps"]
+        phase_name = phase["name"]
+
+        self.env.set_phase(phase)
+
+        tqdm_cb = TqdmCallback(
+            total_timesteps=timesteps,
+            phase_name=phase_name,
+            verbose=1
+        )
         checkpoint_cb = CheckpointCallback(
             save_freq   = 10000,
-            save_path   = "results/checkpoints/",
+            save_path   = f"results/checkpoints/{phase_name}/",
             name_prefix = "ppo_traffic",
             verbose     = 0
         )
 
-        print(f"\nStarting PPO training for {timesteps} timesteps...")
-        print(f"Network: TrafficNet (256→256→128) + pi[128,64] + vf[128,64]")
-        print(f"LR schedule: 0.0003 → 0.00001 (linear decay)\n")
-
         self.model.learn(
             total_timesteps     = timesteps,
             callback            = [tqdm_cb, checkpoint_cb],
-            tb_log_name         = "PPO_traffic",
-            reset_num_timesteps = True
+            tb_log_name         = f"PPO_{phase_name}",
+            reset_num_timesteps = reset_timesteps
         )
-        print("\nTraining complete.")
+
+        # Save after each phase
+        self.save(f"results/ppo_model_{phase_name}")
+
+    def train_curriculum(self, phases):
+        """Run all curriculum phases sequentially."""
+        print("\n" + "=" * 55)
+        print("  CURRICULUM TRAINING")
+        print("=" * 55)
+        total = sum(p["timesteps"] for p in phases)
+        print(f"  Phases:          {len(phases)}")
+        print(f"  Total timesteps: {total:,}")
+        print("=" * 55)
+
+        for i, phase in enumerate(phases):
+            print(f"\n[{i+1}/{len(phases)}] {phase['name']}"
+                  f" | nodes={phase['num_nodes']}"
+                  f" | topo={phase['topo_type']}"
+                  f" | steps={phase['timesteps']:,}")
+
+            self.train_phase(
+                phase,
+                reset_timesteps=(i == 0)  # only reset on first phase
+            )
+            print(f"  Phase {phase['name']} complete.")
+
+        print("\n" + "=" * 55)
+        print("  CURRICULUM COMPLETE")
+        print("=" * 55)
 
     def save(self, path="results/ppo_model"):
         self.model.save(path)
-        print(f"Model saved → {path}")
+        print(f"  Saved → {path}")
 
     def load(self, path="results/ppo_model"):
         self.model = PPO.load(path, env=self.env)
-        print(f"Model loaded ← {path}")
+        print(f"  Loaded ← {path}")
 
     def predict(self, obs):
         action, _ = self.model.predict(obs, deterministic=True)

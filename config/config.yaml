@@ -1,13 +1,39 @@
 simulation:
-  num_nodes: 4
-  sim_time: 10.0
   port: 5555
   step_interval: 0.5
 
 topology:
-  type: linear
   data_rate: "10Mbps"
   delay: "2ms"
+
+curriculum:
+  enabled: true
+  phases:
+    - name: "linear-4"
+      num_nodes: 4
+      topo_type: "linear"
+      sim_time: 8.0
+      timesteps: 50000
+    - name: "linear-6"
+      num_nodes: 6
+      topo_type: "linear"
+      sim_time: 8.0
+      timesteps: 50000
+    - name: "grid-9"
+      num_nodes: 9
+      topo_type: "grid"
+      sim_time: 10.0
+      timesteps: 50000
+    - name: "random-12"
+      num_nodes: 12
+      topo_type: "random"
+      sim_time: 10.0
+      timesteps: 50000
+    - name: "random-16"
+      num_nodes: 16
+      topo_type: "random"
+      sim_time: 12.0
+      timesteps: 50000
 
 ppo:
   policy: "MlpPolicy"
@@ -21,7 +47,6 @@ ppo:
   ent_coef: 0.05
   vf_coef: 0.5
   max_grad_norm: 0.5
-  total_timesteps: 150000
 
 network:
   net_arch: [256, 256, 128]

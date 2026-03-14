@@ -11,38 +11,41 @@ def main():
     with open("config/config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    print("=" * 50)
-    print("  PPO Evaluation")
-    print("=" * 50)
+    print("=" * 55)
+    print("  PPO Evaluation — All Phases")
+    print("=" * 55)
 
-    env = TrafficEnv(config)
-    agent = PPOAgent(env, config)
-    agent.load("results/ppo_model")
+    env    = TrafficEnv(config)
+    agent  = PPOAgent(env, config)
+    agent.load("results/ppo_model_final")
 
-    n_episodes = 5
-    all_rewards = []
+    phases = config["curriculum"]["phases"]
 
-    for ep in range(n_episodes):
-        obs, _ = env.reset()
-        done      = False
-        truncated = False
-        ep_reward = 0.0
-        steps     = 0
+    for phase in phases:
+        env.set_phase(phase)
+        ep_rewards = []
 
-        while not (done or truncated):
-            action = agent.predict(obs)
-            obs, reward, done, truncated, info = env.step(action)
-            ep_reward += reward
-            steps     += 1
+        for ep in range(3):
+            obs, _    = env.reset()
+            done      = False
+            truncated = False
+            ep_reward = 0.0
+            steps     = 0
 
-        all_rewards.append(ep_reward)
-        print(f"  Episode {ep+1} | steps={steps} | reward={ep_reward:.4f}")
+            while not (done or truncated):
+                action                      = agent.predict(obs)
+                obs, reward, done, truncated, _ = env.step(action)
+                ep_reward += reward
+                steps     += 1
 
-    print("=" * 50)
-    print(f"  Mean reward: {np.mean(all_rewards):.4f}")
-    print(f"  Std  reward: {np.std(all_rewards):.4f}")
-    print("=" * 50)
+            ep_rewards.append(ep_reward)
 
+        print(f"  {phase['name']:15s} | "
+              f"mean={np.mean(ep_rewards):.4f} | "
+              f"best={np.max(ep_rewards):.4f} | "
+              f"steps={steps}")
+
+    print("=" * 55)
     env.close()
 
 
