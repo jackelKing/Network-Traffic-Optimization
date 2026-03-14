@@ -1,0 +1,23 @@
+simulation:
+  num_nodes: 4          # start simple, scale up later
+  sim_time: 10.0        # seconds
+  port: 5555            # ZMQ port for ns3-gym bridge
+
+topology:
+  type: linear          # linear | grid | random
+  data_rate: "10Mbps"
+  delay: "2ms"
+
+ppo:
+  policy: "MlpPolicy"
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  total_timesteps: 100000
+
+reward:
+  delay_weight: 0.5
+  throughput_weight: 0.3
+  loss_weight: 0.2

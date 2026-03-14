@@ -1,0 +1,9 @@
+gymnasium
+stable-baselines3
+numpy
+pyyaml
+matplotlib
+pandas
+tensorboard
+jupyter
+notebook
