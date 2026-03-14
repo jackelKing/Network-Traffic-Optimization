@@ -8,9 +8,6 @@ from ns3gym import ns3env
 
 
 class TrafficEnv(gym.Env):
-    """
-    Gymnasium-compatible wrapper around ns3gym for PPO training.
-    """
     metadata = {"render_modes": []}
 
     def __init__(self, config):
@@ -27,30 +24,30 @@ class TrafficEnv(gym.Env):
         self.delay         = self.topo["delay"]
         self.step_interval = self.sim_cfg.get("step_interval", 0.5)
 
-        self.ns3_path      = os.path.expanduser("~/ns-3-dev")
-        self.ns3_process   = None
-        self._ns3env       = None
+        self.ns3_path    = os.path.expanduser("~/ns-3-dev")
+        self.ns3_process = None
+        self._ns3env     = None
 
-        # Define spaces upfront so SB3 is happy before reset()
-        obs_size = self.num_nodes * 3   # queue, util, delay per node
-        act_size = self.num_nodes * 2   # next_hop + bw per node
+        obs_size = self.num_nodes * 3
+        act_size = self.num_nodes * 2
 
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
             shape=(obs_size,),
             dtype=np.float32
         )
+        # Use float32 for action space so SB3 PPO works natively
+        # We cast to int before sending to NS3
         self.action_space = spaces.Box(
-            low=0,
-            high=max(self.num_nodes, 5) - 1,
+            low=0.0,
+            high=float(max(self.num_nodes, 5) - 1),
             shape=(act_size,),
-            dtype=np.int64
+            dtype=np.float32
         )
 
         self._episode     = 0
         self._total_steps = 0
 
-    # ── Launch NS3 ────────────────────────────────────────────
     def _start_ns3(self):
         if self.ns3_process is not None:
             self._stop_ns3()
@@ -74,9 +71,8 @@ class TrafficEnv(gym.Env):
             stderr=subprocess.DEVNULL,
             cwd=self.ns3_path
         )
-        time.sleep(2.0)  # wait for NS3 to open ZMQ socket
+        time.sleep(2.0)
 
-    # ── Stop NS3 ──────────────────────────────────────────────
     def _stop_ns3(self):
         if self._ns3env is not None:
             try:
@@ -93,7 +89,6 @@ class TrafficEnv(gym.Env):
                 self.ns3_process.kill()
             self.ns3_process = None
 
-    # ── Reset ─────────────────────────────────────────────────
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._stop_ns3()
@@ -106,26 +101,23 @@ class TrafficEnv(gym.Env):
         )
 
         obs = self._ns3env.reset()
-        obs = np.array(obs, dtype=np.float32)
-        obs = np.clip(obs, 0.0, 1.0)
-
+        obs = np.clip(np.array(obs, dtype=np.float32), 0.0, 1.0)
         self._episode += 1
         return obs, {}
 
-    # ── Step ──────────────────────────────────────────────────
     def step(self, action):
-        obs, reward, done, info = self._ns3env.step(action)
+        # Cast to list of Python ints — ns3gym requires native int
+        action_int = [int(round(float(a))) for a in action]
 
-        obs = np.array(obs, dtype=np.float32)
-        obs = np.clip(obs, 0.0, 1.0)
+        obs, reward, done, info = self._ns3env.step(action_int)
 
+        obs = np.clip(np.array(obs, dtype=np.float32), 0.0, 1.0)
         self._total_steps += 1
-        truncated = False
+
         if info is None:
             info = {}
 
-        return obs, float(reward), bool(done), truncated, info
+        return obs, float(reward), bool(done), False, info
 
-    # ── Close ─────────────────────────────────────────────────
     def close(self):
         self._stop_ns3()
