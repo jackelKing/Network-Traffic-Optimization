@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.o
+*.so
+results/
+logs/
+*.csv
+*.png
