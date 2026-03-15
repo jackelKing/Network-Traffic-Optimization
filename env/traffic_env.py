@@ -153,31 +153,53 @@ class TrafficEnv(gym.Env):
         return np.clip(obs, 0.0, 1.0)
 
     def _shape_reward(self, obs, done):
-        cfg        = self.reward_cfg
-        delays     = obs[2::3]
-        utils      = obs[1::3]
-        queues     = obs[0::3]
+        cfg = self.reward_cfg
 
-        avg_delay  = float(np.mean(delays))
-        avg_util   = float(np.mean(utils))
+        # New obs layout: [queue, util, delay, loss, congestion] x numNodes
+        queues     = obs[0::5]
+        utils      = obs[1::5]
+        delays     = obs[2::5]
+        losses     = obs[3::5]
+        congestion = obs[4::5]
+
         avg_queue  = float(np.mean(queues))
+        avg_util   = float(np.mean(utils))
+        avg_delay  = float(np.mean(delays))
+        avg_loss   = float(np.mean(losses))
+        avg_cong   = float(np.mean(congestion))
 
-        delay_pen  = - cfg["delay_weight"]      * avg_delay
-        tput_bonus =   cfg["throughput_weight"] * avg_util
-        loss_pen   = - cfg["loss_weight"]        * avg_queue
-        base       = delay_pen + tput_bonus + loss_pen
+        # Base reward
+        delay_pen  = - cfg["delay_weight"]       * avg_delay
+        tput_bonus =   cfg["throughput_weight"]  * avg_util
+        loss_pen   = - cfg["loss_weight"]         * avg_loss
+        cong_pen   = - cfg.get("congestion_weight", 0.15) * avg_cong
+        base       = delay_pen + tput_bonus + loss_pen + cong_pen
 
-        progress   = 0.0
+        # Progress bonus
+        progress = 0.0
         if self._prev_reward is not None and cfg.get("shaping", False):
             progress = cfg.get("progress_bonus", 0.1) * (
                 base - self._prev_reward)
-
         self._prev_reward = base
 
-        util_bonus  = 0.05 * avg_util  if avg_util  > 0.5 else 0.0
-        queue_bonus = 0.05 * (1.0 - avg_queue)
+        # Congestion avoidance bonus — key differentiator vs OSPF
+        cong_avoid = 0.0
+        if avg_cong < 0.1 and avg_util > 0.4:
+            cong_avoid = 0.3   # high reward: low congestion + good throughput
+        elif avg_cong < 0.3:
+            cong_avoid = 0.1
 
-        return base + progress + util_bonus + queue_bonus
+        # Load balance bonus — reward uniform link utilization
+        if len(utils) > 1:
+            balance = 0.1 * (1.0 - (float(np.max(utils))
+                                   - float(np.min(utils))))
+        else:
+            balance = 0.0
+
+        # Throughput bonus for high utilization
+        tput_bonus2 = 0.1 * avg_util if avg_util > 0.5 else 0.0
+
+        return base + progress + cong_avoid + balance + tput_bonus2
 
     def close(self):
         self._stop_ns3()
