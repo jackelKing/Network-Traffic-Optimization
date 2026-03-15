@@ -11,9 +11,7 @@ TypeId TrafficGymEnv::GetTypeId() {
     return tid;
 }
 
-TrafficGymEnv::TrafficGymEnv() {
-    NS_LOG_FUNCTION(this);
-}
+TrafficGymEnv::TrafficGymEnv() { NS_LOG_FUNCTION(this); }
 
 TrafficGymEnv::TrafficGymEnv(SimConfig cfg) : m_cfg(cfg) {
     NS_LOG_FUNCTION(this);
@@ -21,50 +19,43 @@ TrafficGymEnv::TrafficGymEnv(SimConfig cfg) : m_cfg(cfg) {
     m_avgDelay   = 0.0;
     m_throughput = 0.0;
     m_packetLoss = 0.0;
-
     m_queueLen.resize(cfg.numNodes, 0.0);
     m_linkUtil.resize(cfg.numNodes, 0.0);
     m_delay.resize(cfg.numNodes, 0.0);
 
-    if (cfg.topoType == "linear")    BuildLinearTopology();
-    else if (cfg.topoType == "grid") BuildGridTopology();
-    else                             BuildRandomTopology();
+    if (cfg.topoType == "linear")      BuildLinearTopology();
+    else if (cfg.topoType == "grid")   BuildGridTopology();
+    else                               BuildRandomTopology();
 
     m_flowMonitor = m_flowHelper.InstallAll();
 }
 
-TrafficGymEnv::~TrafficGymEnv() {
-    NS_LOG_FUNCTION(this);
-}
+TrafficGymEnv::~TrafficGymEnv() { NS_LOG_FUNCTION(this); }
 
-// Called every stepInterval seconds — triggers Notify() which
-// blocks NS3 and waits for Python to send an action
 void TrafficGymEnv::ScheduleNextStep() {
     Simulator::Schedule(Seconds(m_cfg.stepInterval),
                         &TrafficGymEnv::Step, this);
 }
 
 void TrafficGymEnv::Step() {
-    Notify();   // sends obs to Python, waits for action, calls ExecuteActions
-    if (!GetGameOver()) {
-        ScheduleNextStep();
-    }
+    Notify();
+    if (!GetGameOver()) ScheduleNextStep();
 }
 
 Ptr<OpenGymSpace> TrafficGymEnv::GetObservationSpace() {
     uint32_t obsSize = m_cfg.numNodes * OBS_PER_NODE;
     std::vector<uint32_t> shape = {obsSize};
-    std::string dtype = TypeNameGet<float>();
-    return CreateObject<OpenGymBoxSpace>(0.0, 1.0, shape, dtype);
+    return CreateObject<OpenGymBoxSpace>(0.0, 1.0, shape,
+                                        TypeNameGet<float>());
 }
 
 Ptr<OpenGymSpace> TrafficGymEnv::GetActionSpace() {
     uint32_t actionSize = m_cfg.numNodes * 2;
     std::vector<uint32_t> shape = {actionSize};
-    std::string dtype = TypeNameGet<uint32_t>();
     float maxVal = (float)(std::max(m_cfg.numNodes,
                    (uint32_t)MAX_BW_LEVELS) - 1);
-    return CreateObject<OpenGymBoxSpace>(0.0, maxVal, shape, dtype);
+    return CreateObject<OpenGymBoxSpace>(0.0, maxVal, shape,
+                                        TypeNameGet<uint32_t>());
 }
 
 Ptr<OpenGymDataContainer> TrafficGymEnv::GetObservation() {
@@ -167,6 +158,7 @@ void TrafficGymEnv::CollectStats() {
     }
 }
 
+// ── Linear topology ───────────────────────────────────────────
 void TrafficGymEnv::BuildLinearTopology() {
     m_nodes.Create(m_cfg.numNodes);
     InternetStackHelper internet;
@@ -188,25 +180,25 @@ void TrafficGymEnv::BuildLinearTopology() {
     }
 
     uint16_t port = 9;
-    UdpServerHelper server(port);
     ApplicationContainer srvApp =
-        server.Install(m_nodes.Get(m_cfg.numNodes - 1));
+        UdpServerHelper(port).Install(m_nodes.Get(m_cfg.numNodes - 1));
     srvApp.Start(Seconds(0.0));
     srvApp.Stop(Seconds(m_cfg.simTime));
 
-    Ipv4Address destAddr =
-        m_interfaces.GetAddress(m_interfaces.GetN() - 1);
-    UdpClientHelper client(destAddr, port);
+    UdpClientHelper client(
+        m_interfaces.GetAddress(m_interfaces.GetN() - 1), port);
     client.SetAttribute("MaxPackets", UintegerValue(100000));
     client.SetAttribute("Interval",   TimeValue(MilliSeconds(10)));
     client.SetAttribute("PacketSize", UintegerValue(1024));
-    client.Install(m_nodes.Get(0)).Start(Seconds(0.5));
-    client.Install(m_nodes.Get(0)).Stop(Seconds(m_cfg.simTime));
+    ApplicationContainer cliApp = client.Install(m_nodes.Get(0));
+    cliApp.Start(Seconds(0.5));
+    cliApp.Stop(Seconds(m_cfg.simTime));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
     NS_LOG_UNCOND("Linear topology built: " << m_cfg.numNodes << " nodes");
 }
 
+// ── Grid topology ─────────────────────────────────────────────
 void TrafficGymEnv::BuildGridTopology() {
     uint32_t side = (uint32_t)std::sqrt((double)m_cfg.numNodes);
     if (side * side != m_cfg.numNodes) {
@@ -247,23 +239,25 @@ void TrafficGymEnv::BuildGridTopology() {
     }
 
     uint16_t port = 9;
-    UdpServerHelper server(port);
-    server.Install(m_nodes.Get(m_cfg.numNodes-1)).Start(Seconds(0.0));
-    server.Install(m_nodes.Get(m_cfg.numNodes-1)).Stop(Seconds(m_cfg.simTime));
+    ApplicationContainer srvApp =
+        UdpServerHelper(port).Install(m_nodes.Get(m_cfg.numNodes - 1));
+    srvApp.Start(Seconds(0.0));
+    srvApp.Stop(Seconds(m_cfg.simTime));
 
-    Ipv4Address destAddr =
-        m_interfaces.GetAddress(m_interfaces.GetN() - 1);
-    UdpClientHelper client(destAddr, port);
+    UdpClientHelper client(
+        m_interfaces.GetAddress(m_interfaces.GetN() - 1), port);
     client.SetAttribute("MaxPackets", UintegerValue(100000));
     client.SetAttribute("Interval",   TimeValue(MilliSeconds(10)));
     client.SetAttribute("PacketSize", UintegerValue(1024));
-    client.Install(m_nodes.Get(0)).Start(Seconds(0.5));
-    client.Install(m_nodes.Get(0)).Stop(Seconds(m_cfg.simTime));
+    ApplicationContainer cliApp = client.Install(m_nodes.Get(0));
+    cliApp.Start(Seconds(0.5));
+    cliApp.Stop(Seconds(m_cfg.simTime));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
     NS_LOG_UNCOND("Grid topology built: " << side << "x" << side);
 }
 
+// ── Random topology ───────────────────────────────────────────
 void TrafficGymEnv::BuildRandomTopology() {
     m_nodes.Create(m_cfg.numNodes);
     InternetStackHelper internet;
@@ -276,6 +270,7 @@ void TrafficGymEnv::BuildRandomTopology() {
     Ipv4AddressHelper addr;
     addr.SetBase("10.1.1.0", "255.255.255.0");
 
+    // Backbone chain for guaranteed connectivity
     for (uint32_t i = 0; i < m_cfg.numNodes - 1; i++) {
         NetDeviceContainer lnk =
             p2p.Install(m_nodes.Get(i), m_nodes.Get(i + 1));
@@ -284,6 +279,7 @@ void TrafficGymEnv::BuildRandomTopology() {
         addr.NewNetwork();
     }
 
+    // Extra random links
     Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
     for (uint32_t k = 0; k < m_cfg.numNodes / 2; k++) {
         uint32_t a = rng->GetInteger(0, m_cfg.numNodes - 1);
@@ -298,34 +294,36 @@ void TrafficGymEnv::BuildRandomTopology() {
     }
 
     uint16_t port = 9;
-    UdpServerHelper server(port);
-    server.Install(m_nodes.Get(m_cfg.numNodes-1)).Start(Seconds(0.0));
-    server.Install(m_nodes.Get(m_cfg.numNodes-1)).Stop(Seconds(m_cfg.simTime));
+    ApplicationContainer srvApp =
+        UdpServerHelper(port).Install(m_nodes.Get(m_cfg.numNodes - 1));
+    srvApp.Start(Seconds(0.0));
+    srvApp.Stop(Seconds(m_cfg.simTime));
 
-    Ipv4Address destAddr =
-        m_interfaces.GetAddress(m_interfaces.GetN() - 1);
-    UdpClientHelper client(destAddr, port);
+    UdpClientHelper client(
+        m_interfaces.GetAddress(m_interfaces.GetN() - 1), port);
     client.SetAttribute("MaxPackets", UintegerValue(100000));
     client.SetAttribute("Interval",   TimeValue(MilliSeconds(10)));
     client.SetAttribute("PacketSize", UintegerValue(1024));
-    client.Install(m_nodes.Get(0)).Start(Seconds(0.5));
-    client.Install(m_nodes.Get(0)).Stop(Seconds(m_cfg.simTime));
+    ApplicationContainer cliApp = client.Install(m_nodes.Get(0));
+    cliApp.Start(Seconds(0.5));
+    cliApp.Stop(Seconds(m_cfg.simTime));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
     NS_LOG_UNCOND("Random topology built: " << m_cfg.numNodes << " nodes");
 }
 
+// ── Main ──────────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
     SimConfig cfg;
 
     CommandLine cmd;
-    cmd.AddValue("numNodes",      "Number of nodes",        cfg.numNodes);
-    cmd.AddValue("topoType",      "Topology type",          cfg.topoType);
-    cmd.AddValue("simTime",       "Simulation time (s)",    cfg.simTime);
-    cmd.AddValue("port",          "OpenGym ZMQ port",       cfg.openGymPort);
-    cmd.AddValue("dataRate",      "Link data rate",         cfg.dataRate);
-    cmd.AddValue("delay",         "Link delay",             cfg.delay);
-    cmd.AddValue("stepInterval",  "Step interval (s)",      cfg.stepInterval);
+    cmd.AddValue("numNodes",     "Number of nodes",        cfg.numNodes);
+    cmd.AddValue("topoType",     "Topology type",          cfg.topoType);
+    cmd.AddValue("simTime",      "Simulation time (s)",    cfg.simTime);
+    cmd.AddValue("port",         "OpenGym ZMQ port",       cfg.openGymPort);
+    cmd.AddValue("dataRate",     "Link data rate",         cfg.dataRate);
+    cmd.AddValue("delay",        "Link delay",             cfg.delay);
+    cmd.AddValue("stepInterval", "Step interval (s)",      cfg.stepInterval);
     cmd.Parse(argc, argv);
 
     NS_LOG_UNCOND("Starting PPO Traffic Sim"
@@ -336,12 +334,9 @@ int main(int argc, char* argv[]) {
         << " | step="     << cfg.stepInterval << "s");
 
     Ptr<TrafficGymEnv> env = CreateObject<TrafficGymEnv>(cfg);
-
     Ptr<OpenGymInterface> openGym =
         CreateObject<OpenGymInterface>(cfg.openGymPort);
     env->SetOpenGymInterface(openGym);
-
-    // Schedule first RL step
     env->ScheduleNextStep();
 
     Simulator::Stop(Seconds(cfg.simTime));
