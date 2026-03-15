@@ -7,11 +7,15 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/applications-module.h"
 #include "ns3/flow-monitor-module.h"
+#include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/ipv4-list-routing-helper.h"
 
 #include <vector>
 #include <string>
 #include <sstream>
 #include <cmath>
+#include <map>
+#include <utility>
 
 using namespace ns3;
 
@@ -28,7 +32,7 @@ struct SimConfig {
     double      delayWeight = 0.5;
     double      tputWeight  = 0.3;
     double      lossWeight  = 0.2;
-    double      stepInterval = 0.5;   // seconds between RL steps
+    double      stepInterval = 0.5;
 };
 
 class TrafficGymEnv : public OpenGymEnv {
@@ -52,6 +56,8 @@ public:
     void BuildLinearTopology();
     void BuildGridTopology();
     void BuildRandomTopology();
+    void InstallStaticRoutes();
+    void UpdateRoute(uint32_t nodeId, uint32_t nextHop);
 
 private:
     SimConfig                m_cfg;
@@ -60,6 +66,12 @@ private:
     Ipv4InterfaceContainer   m_interfaces;
     FlowMonitorHelper        m_flowHelper;
     Ptr<FlowMonitor>         m_flowMonitor;
+
+    // Static routing helpers per node
+    std::vector<Ptr<Ipv4StaticRouting>> m_staticRouting;
+
+    // Link map: (nodeA, nodeB) -> device index
+    std::vector<std::pair<uint32_t,uint32_t>> m_links;
 
     std::vector<double>      m_queueLen;
     std::vector<double>      m_linkUtil;
