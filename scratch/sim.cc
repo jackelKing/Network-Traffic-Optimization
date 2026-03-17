@@ -313,12 +313,14 @@ void TrafficGymEnv::InstallMultipleFlows(uint32_t numFlows) {
 
         // Client — vary intervals to create different congestion levels
         // f=0: 5ms (high load), f=1: 8ms, f=2: 12ms (lower load)
-        uint32_t intervalMs = 5 + (f * 4);
+        // Aggressive traffic to create heavy congestion
+        // OSPF cannot adapt — PPO learns to reroute around bottlenecks
+        uint32_t intervalMs = 2 + (f * 2);  // 2ms, 4ms, 6ms — heavy load
         UdpClientHelper client(dstAddr, port);
         client.SetAttribute("MaxPackets", UintegerValue(1000000));
         client.SetAttribute("Interval",
                             TimeValue(MilliSeconds(intervalMs)));
-        client.SetAttribute("PacketSize", UintegerValue(512));
+        client.SetAttribute("PacketSize", UintegerValue(1024));  // larger packets
         ApplicationContainer cliApp = client.Install(m_nodes.Get(src));
         cliApp.Start(Seconds(0.1 + f * 0.05));
         cliApp.Stop(Seconds(m_cfg.simTime));

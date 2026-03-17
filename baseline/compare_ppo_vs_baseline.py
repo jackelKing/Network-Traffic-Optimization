@@ -114,6 +114,7 @@ def main():
         env   = TrafficEnv(config)
         agent = PPOAgent(env, config)
         for ckpt in [
+            "results/ppo_model_merged",
             f"results/ppo_model_{phase['name']}",
             "results/ppo_model_final",
             "results/ppo_model_random-16",

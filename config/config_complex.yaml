@@ -1,0 +1,55 @@
+simulation:
+  port: 5555
+  step_interval: 0.3
+
+topology:
+  data_rate: "5Mbps"
+  delay: "5ms"
+
+curriculum:
+  enabled: true
+  phases:
+    - name: "random-12-heavy"
+      num_nodes: 12
+      topo_type: "random"
+      sim_time: 15.0
+      timesteps: 150000
+    - name: "random-16-heavy"
+      num_nodes: 16
+      topo_type: "random"
+      sim_time: 15.0
+      timesteps: 150000
+    - name: "random-16-extreme"
+      num_nodes: 16
+      topo_type: "random"
+      sim_time: 20.0
+      timesteps: 150000
+    - name: "random-20"
+      num_nodes: 20
+      topo_type: "random"
+      sim_time: 20.0
+      timesteps: 150000
+
+ppo:
+  policy: "MlpPolicy"
+  learning_rate: 0.0001
+  n_steps: 1024
+  batch_size: 256
+  n_epochs: 20
+  gamma: 0.995
+  gae_lambda: 0.97
+  clip_range: 0.15
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+network:
+  net_arch: [256, 256, 128]
+
+reward:
+  delay_weight: 0.3
+  throughput_weight: 0.4
+  loss_weight: 0.15
+  congestion_weight: 0.15
+  progress_bonus: 0.1
+  shaping: true
