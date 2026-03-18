@@ -7,3 +7,15 @@ logs/
 *.csv
 *.png
 !results/*.zip
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Training artifacts
+results/
+logs/
+*.zip
+*.png
+
+# Misc
+all_files.txt
