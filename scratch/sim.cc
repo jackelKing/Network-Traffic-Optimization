@@ -157,9 +157,9 @@ float TrafficGymEnv::GetReward() {
     // Prevents PPO from learning to avoid routing entirely
     double zeroTputPenalty = 0.0;
     if (normTput < 0.01)
-        zeroTputPenalty = -2.0;  // severe penalty for no traffic
+        zeroTputPenalty = -0.3;
     else if (normTput < 0.05)
-        zeroTputPenalty = -0.5;  // moderate penalty for very low traffic
+        zeroTputPenalty = -0.1;
 
     // Improvement bonus
     double improvementBonus = 0.1 * (delayDelta + tputDelta + lossDelta);

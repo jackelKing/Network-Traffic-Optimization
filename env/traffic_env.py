@@ -175,13 +175,12 @@ class TrafficEnv(gym.Env):
         cong_pen   = - cfg.get("congestion_weight", 0.15) * avg_cong
         base       = delay_pen + tput_bonus + loss_pen + cong_pen
 
-        # CRITICAL FIX: Zero throughput penalty
-        # Prevents PPO from reward hacking by doing nothing
+        # Zero throughput penalty — calibrated, not harsh
         zero_tput_penalty = 0.0
         if avg_util < 0.01:
-            zero_tput_penalty = -2.0  # severe: must route traffic
+            zero_tput_penalty = -0.3
         elif avg_util < 0.05:
-            zero_tput_penalty = -0.5  # moderate penalty
+            zero_tput_penalty = -0.1
 
         # Progress bonus
         progress = 0.0

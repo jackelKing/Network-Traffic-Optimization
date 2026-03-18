@@ -33,8 +33,8 @@ curriculum:
 ppo:
   policy: "MlpPolicy"
   learning_rate: 0.0001
-  n_steps: 1024
-  batch_size: 256
+  n_steps: 256
+  batch_size: 64
   n_epochs: 20
   gamma: 0.995
   gae_lambda: 0.97
