@@ -153,28 +153,37 @@ float TrafficGymEnv::GetReward() {
         - m_cfg.lossWeight        * normLoss
         - m_cfg.congestionWeight  * normCong;
 
-    // Improvement bonus — key for learning
+    // CRITICAL: Heavy penalty for zero throughput
+    // Prevents PPO from learning to avoid routing entirely
+    double zeroTputPenalty = 0.0;
+    if (normTput < 0.01)
+        zeroTputPenalty = -2.0;  // severe penalty for no traffic
+    else if (normTput < 0.05)
+        zeroTputPenalty = -0.5;  // moderate penalty for very low traffic
+
+    // Improvement bonus
     double improvementBonus = 0.1 * (delayDelta + tputDelta + lossDelta);
 
-    // Congestion avoidance bonus
-    // If congestion is low AND throughput is high — reward heavily
+    // Congestion avoidance bonus ONLY when throughput is meaningful
     double congAvoidBonus = 0.0;
-    if (normCong < 0.1 && normTput > 0.5)
-        congAvoidBonus = 0.2;
-    else if (normCong < 0.3 && normTput > 0.3)
+    if (normTput > 0.1 && normCong < 0.1)
+        congAvoidBonus = 0.3;
+    else if (normTput > 0.05 && normCong < 0.3)
         congAvoidBonus = 0.1;
 
-    // Load balance bonus — reward uniform utilization across nodes
+    // Load balance bonus
     double maxUtil = *std::max_element(m_linkUtil.begin(), m_linkUtil.end());
     double minUtil = *std::min_element(m_linkUtil.begin(), m_linkUtil.end());
-    double balanceBonus = 0.1 * (1.0 - (maxUtil - minUtil));
+    double balanceBonus = 0.0;
+    if (normTput > 0.05)  // only reward balance when traffic is flowing
+        balanceBonus = 0.1 * (1.0 - (maxUtil - minUtil));
 
     m_prevDelay = normDelay;
     m_prevTput  = normTput;
     m_prevLoss  = normLoss;
 
-    return (float)(baseReward + improvementBonus +
-                   congAvoidBonus + balanceBonus);
+    return (float)(baseReward + zeroTputPenalty +
+                   improvementBonus + congAvoidBonus + balanceBonus);
 }
 
 bool TrafficGymEnv::GetGameOver() {
