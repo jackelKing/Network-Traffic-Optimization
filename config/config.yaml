@@ -1,60 +1,74 @@
 simulation:
   port: 5555
   step_interval: 0.5
-
 topology:
-  data_rate: "10Mbps"
-  delay: "2ms"
-
+  data_rate: 10Mbps
+  delay: 2ms
 curriculum:
   enabled: true
   phases:
-    - name: "linear-4"
-      num_nodes: 4
-      topo_type: "linear"
-      sim_time: 8.0
-      timesteps: 80000
-    - name: "linear-6"
-      num_nodes: 6
-      topo_type: "linear"
-      sim_time: 8.0
-      timesteps: 80000
-    - name: "grid-9"
-      num_nodes: 9
-      topo_type: "grid"
-      sim_time: 10.0
-      timesteps: 80000
-    - name: "random-12"
-      num_nodes: 12
-      topo_type: "random"
-      sim_time: 10.0
-      timesteps: 80000
-    - name: "random-16"
-      num_nodes: 16
-      topo_type: "random"
-      sim_time: 12.0
-      timesteps: 80000
-
+  - name: linear-4
+    num_nodes: 4
+    topo_type: linear
+    sim_time: 30.0
+    timesteps: 50000
+  - name: linear-12
+    num_nodes: 12
+    topo_type: linear
+    sim_time: 40.0
+    timesteps: 150000
+  - name: linear-16
+    num_nodes: 16
+    topo_type: linear
+    sim_time: 40.0
+    timesteps: 150000
+  - name: grid-9
+    num_nodes: 9
+    topo_type: grid
+    sim_time: 40.0
+    timesteps: 150000
+  - name: grid-12
+    num_nodes: 12
+    topo_type: grid
+    sim_time: 40.0
+    timesteps: 200000
+  - name: random-9
+    num_nodes: 9
+    topo_type: random
+    sim_time: 40.0
+    timesteps: 150000
+  - name: random-12
+    num_nodes: 12
+    topo_type: random
+    sim_time: 40.0
+    timesteps: 200000
+  - name: random-16
+    num_nodes: 16
+    topo_type: random
+    sim_time: 50.0
+    timesteps: 250000
 ppo:
-  policy: "MlpPolicy"
+  policy: MlpPolicy
   learning_rate: 0.0003
-  n_steps: 512
-  batch_size: 128
-  n_epochs: 15
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.05
+  clip_range_vf: 0.2
+  ent_coef: 0.01
   vf_coef: 0.5
   max_grad_norm: 0.5
-
 network:
-  net_arch: [256, 256, 128]
-
+  net_arch:
+  - 256
+  - 256
+  - 128
 reward:
-  delay_weight: 0.3
-  throughput_weight: 0.4
-  loss_weight: 0.15
-  congestion_weight: 0.15
-  progress_bonus: 0.1
-  shaping: true
+  delay_weight: 0.1
+  throughput_weight: 0.6
+  loss_weight: 0.1
+  congestion_weight: 0.1
+  progress_bonus: 0.05
+  shaping: false

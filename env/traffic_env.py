@@ -10,7 +10,6 @@ from ns3gym import ns3env
 class TrafficEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    # Max nodes we'll ever use — fixes observation space size
     MAX_NODES = 20
 
     def __init__(self, config, phase=None):
@@ -18,29 +17,28 @@ class TrafficEnv(gym.Env):
         self.config     = config
         self.topo       = config["topology"]
         self.reward_cfg = config["reward"]
-        self.port       = config["simulation"]["port"]
+        self.port = config["simulation"].get("port_override", config["simulation"]["port"])
 
-        # Phase can be overridden externally by curriculum
-        self._phase     = phase or {
+        self._phase = phase or {
             "num_nodes": 4,
             "topo_type": "linear",
-            "sim_time":  8.0,
+            "sim_time":  30.0,
             "name":      "default"
         }
 
-        self.ns3_path     = os.path.expanduser("~/ns-3-dev")
-        self.ns3_process  = None
-        self._ns3env      = None
+        self.ns3_path    = os.path.expanduser("~/ns-3-dev")
+        self.ns3_process = None
+        self._ns3env     = None
 
-        # Fixed obs/action size based on MAX_NODES
-        # so the same model works across all phases
-        obs_size = self.MAX_NODES * 3
+        self.HIST_LEN = 3
+        self.OBS_CORE = 5   # [queue, util, delay, loss, cong]
+        obs_size = self.MAX_NODES * (self.OBS_CORE + self.HIST_LEN)
         act_size = self.MAX_NODES * 2
 
+        self._delay_hist = []
+
         self.observation_space = spaces.Box(
-            low=0.0, high=1.0,
-            shape=(obs_size,),
-            dtype=np.float32
+            low=0.0, high=1.0, shape=(obs_size,), dtype=np.float32
         )
         self.action_space = spaces.Box(
             low=0.0,
@@ -54,7 +52,6 @@ class TrafficEnv(gym.Env):
         self._total_steps = 0
 
     def set_phase(self, phase):
-        """Called by curriculum trainer to switch topology."""
         self._phase = phase
         print(f"\n  Switching to phase: {phase['name']}"
               f" | nodes={phase['num_nodes']}"
@@ -83,7 +80,21 @@ class TrafficEnv(gym.Env):
             stderr=subprocess.DEVNULL,
             cwd=self.ns3_path
         )
-        time.sleep(2.0)
+        for _ in range(20):
+            time.sleep(0.5)
+            if self.ns3_process.poll() is not None:
+                break
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.3)
+                result = s.connect_ex(('localhost', self.port))
+                s.close()
+                if result == 0:
+                    break
+            except Exception:
+                pass
+        time.sleep(0.3)
 
     def _stop_ns3(self):
         if self._ns3env is not None:
@@ -99,6 +110,7 @@ class TrafficEnv(gym.Env):
             except subprocess.TimeoutExpired:
                 self.ns3_process.kill()
             self.ns3_process = None
+        time.sleep(0.2)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -111,16 +123,16 @@ class TrafficEnv(gym.Env):
             debug=False
         )
 
-        raw_obs       = self._ns3env.reset()
-        obs           = self._pad_obs(raw_obs)
+        raw_obs          = self._ns3env.reset()
+        obs              = self._pad_obs(raw_obs)
         self._prev_reward = None
-        self._ep_step     = 0
-        self._ep_reward   = 0.0
-        self._episode    += 1
+        self._ep_step    = 0
+        self._delay_hist = []
+        self._ep_reward  = 0.0
+        self._episode   += 1
         return obs, {}
 
     def step(self, action):
-        # Only send actions for active nodes
         n = self._phase["num_nodes"]
         action_int = [int(round(float(a))) % n
                       for a in action[:n * 2]]
@@ -142,72 +154,138 @@ class TrafficEnv(gym.Env):
         return obs, float(shaped_reward), bool(done), False, info
 
     def _pad_obs(self, raw_obs):
-        """Pad observation to MAX_NODES*3 so shape is always fixed."""
-        obs    = np.array(raw_obs, dtype=np.float32)
-        target = self.MAX_NODES * 3
-        if len(obs) < target:
-            obs = np.concatenate([obs, np.zeros(target - len(obs),
-                                                dtype=np.float32)])
+        """Pad/trim raw ns3 obs to MAX_NODES*OBS_CORE, then append history."""
+        try:
+            obs = np.array(raw_obs, dtype=np.float32).flatten()
+            if obs.size == 0:
+                raise ValueError
+        except Exception:
+            obs = np.zeros(self.MAX_NODES * self.OBS_CORE, dtype=np.float32)
+        core_target = self.MAX_NODES * self.OBS_CORE
+        if obs.size < core_target:
+            obs = np.concatenate([obs, np.zeros(core_target - len(obs), dtype=np.float32)])
         else:
-            obs = obs[:target]
-        return np.clip(obs, 0.0, 1.0)
+            obs = obs[:core_target]
+        obs = np.clip(obs, 0.0, 1.0)
+        obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=0.0)
+
+        # Latency history — index into CORE obs only (stride=OBS_CORE, offset=2)
+        delays_now = obs[2::self.OBS_CORE][:self.MAX_NODES]
+        self._delay_hist.append(delays_now.copy())
+        if len(self._delay_hist) > self.HIST_LEN:
+            self._delay_hist.pop(0)
+
+        hist_cols = []
+        for t in range(self.HIST_LEN):
+            if t < len(self._delay_hist):
+                hist_cols.append(self._delay_hist[-(t + 1)])
+            else:
+                hist_cols.append(np.zeros(self.MAX_NODES, dtype=np.float32))
+
+        hist_vec = np.concatenate(hist_cols, axis=0).astype(np.float32)
+        return np.concatenate([obs, hist_vec], axis=0)
 
     def _shape_reward(self, obs, done):
-        cfg = self.reward_cfg
+        """
+        Clean, stable reward for PPO to beat OSPF.
 
-        # Obs layout: [queue, util, delay, loss, congestion] x numNodes
-        queues     = obs[0::5]
-        utils      = obs[1::5]
-        delays     = obs[2::5]
-        losses     = obs[3::5]
-        congestion = obs[4::5]
+        Key insight from obs inspection:
+          - nodes 0-4 in linear-12 always have loss=1.0 (no active flow)
+          - util is typically 0.001-0.01 for idle, 0.1-0.6 for active nodes
+          - real signal comes from active nodes only
 
-        avg_queue  = float(np.mean(queues))
-        avg_util   = float(np.mean(utils))
-        avg_delay  = float(np.mean(delays))
-        avg_loss   = float(np.mean(losses))
-        avg_cong   = float(np.mean(congestion))
+        OSPF baseline: fixed next-hop, no BW adaptation.
+        PPO wins by: load balancing + congestion avoidance + multi-path.
+        Reward must incentivise exactly those behaviours.
+        """
+        cfg  = self.reward_cfg
+        n    = self._phase["num_nodes"]
+        # Only use obs from actual nodes in this phase, not padded zeros
+        core = obs[:n * self.OBS_CORE]
 
-        # Base reward
-        delay_pen  = - cfg["delay_weight"]                * avg_delay
-        tput_bonus =   cfg["throughput_weight"]           * avg_util
-        loss_pen   = - cfg["loss_weight"]                  * avg_loss
-        cong_pen   = - cfg.get("congestion_weight", 0.15) * avg_cong
-        base       = delay_pen + tput_bonus + loss_pen + cong_pen
+        utils      = core[1::self.OBS_CORE][:n]
+        delays     = core[2::self.OBS_CORE][:n]
+        losses     = core[3::self.OBS_CORE][:n]
+        congestion = core[4::self.OBS_CORE][:n]
 
-        # Zero throughput penalty — calibrated, not harsh
-        zero_tput_penalty = 0.0
-        if avg_util < 0.01:
-            zero_tput_penalty = -0.3
-        elif avg_util < 0.05:
-            zero_tput_penalty = -0.1
+        # Active node mask — loss=1.0 on util<0.02 means no flow, not real loss
+        active = (utils > 0.02).astype(np.float32)
+        n_act  = max(float(active.sum()), 1.0)
 
-        # Progress bonus
-        progress = 0.0
-        if self._prev_reward is not None and cfg.get("shaping", False):
-            progress = cfg.get("progress_bonus", 0.1) * (
-                base - self._prev_reward)
-        self._prev_reward = base
+        avg_util  = float(np.mean(utils))
+        avg_delay = float(np.dot(active, delays)     / n_act)
+        avg_loss  = float(np.dot(active, losses)     / n_act)
+        avg_cong  = float(np.dot(active, congestion) / n_act)
 
-        # Congestion avoidance bonus ONLY when traffic is flowing
-        cong_avoid = 0.0
-        if avg_util > 0.1 and avg_cong < 0.1:
-            cong_avoid = 0.3
-        elif avg_util > 0.05 and avg_cong < 0.3:
-            cong_avoid = 0.1
+        # ── Core: throughput dominates, penalties are secondary ──
+        reward = (
+              cfg["throughput_weight"] * avg_util        # maximise traffic flow
+            - cfg["delay_weight"]      * avg_delay       # minimise latency
+            - cfg["loss_weight"]       * avg_loss        # minimise drops
+            - cfg.get("congestion_weight", 0.10) * avg_cong  # avoid hotspots
+        )
 
-        # Load balance bonus only when traffic is flowing
-        if len(utils) > 1 and avg_util > 0.05:
-            balance = 0.1 * (1.0 - (float(np.max(utils))
-                                   - float(np.min(utils))))
-        else:
-            balance = 0.0
+        # ── Load balance bonus — PPO's PRIMARY edge over OSPF ────
+        # OSPF sends all traffic on shortest path → one link saturated
+        # PPO learns to spread → all links used → higher total throughput
+        if n_act >= 2:
+            active_utils = utils[active > 0]
+            if len(active_utils) >= 2:
+                # Reward even distribution: std=0 → max bonus, std=0.5 → zero
+                std_u   = float(np.std(active_utils))
+                balance = max(0.0, 0.40 * (1.0 - std_u * 2.0))
+                reward += balance
 
-        # Throughput bonus
-        tput_bonus2 = 0.1 * avg_util if avg_util > 0.1 else 0.0
+        # ── Congestion avoidance bonus — beats OSPF under heavy load ─
+        # OSPF is blind to queue state; PPO observes and re-routes
+        if avg_util > 0.05:
+            if avg_cong < 0.05:
+                reward += 0.20   # excellent: traffic flowing, no congestion
+            elif avg_cong < 0.15:
+                reward += 0.10   # good
+            elif avg_cong < 0.30:
+                reward += 0.03   # acceptable
 
-        return (base + zero_tput_penalty + progress
-                + cong_avoid + balance + tput_bonus2)
+        # ── Throughput excellence — extra push for high utilisation ──
+        if avg_util > 0.40:
+            reward += 0.20 * avg_util
+        elif avg_util > 0.15:
+            reward += 0.10 * avg_util
+
+        # ── BW adaptation bonus — reward PPO for using high bandwidth ─
+        # PPO action[i*2+1] controls bw_level (0-4 = 1/5/10/50/100Mbps)
+        # We infer BW usage from util: high util on active nodes means
+        # PPO is pushing more traffic through — reward it
+        if avg_util > 0.30 and avg_cong < 0.20:
+            # High util + low cong = smart BW allocation (PPO's edge)
+            reward += 0.15
+
+        # ── Multi-path bonus — reward routing diversity ───────────────
+        # Count how many distinct next-hops are used across active nodes
+        # OSPF always uses i→i+1; PPO can use diverse paths
+        # We approximate via util variance: higher variance across nodes
+        # means more diverse routing (some nodes carry more, some less)
+        # but STD penalised above — so this rewards MODERATE spread
+        if n_act >= 3:
+            active_utils = utils[active > 0]
+            if len(active_utils) >= 3:
+                util_range = float(np.max(active_utils) - np.min(active_utils))
+                # Sweet spot: some spread (0.1-0.4) = multi-path routing
+                if 0.05 < util_range < 0.40:
+                    reward += 0.10 * (1.0 - abs(util_range - 0.20) / 0.20)
+
+        # ── Multi-path diversity bonus ────────────────────────────────
+        # OSPF always routes i→i+1 (one fixed path)
+        # PPO can spread traffic across multiple next-hops
+        if n_act >= 3:
+            active_utils = utils[active > 0]
+            if len(active_utils) >= 3:
+                util_range = float(np.max(active_utils) - np.min(active_utils))
+                if 0.05 < util_range < 0.40:
+                    reward += 0.10 * (1.0 - abs(util_range - 0.20) / 0.20)
+
+        # shaping: false in config — disabled intentionally
+        return float(reward)
 
     def close(self):
         self._stop_ns3()
