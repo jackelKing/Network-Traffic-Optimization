@@ -45,5 +45,3 @@ python main.py
 - ML-based prediction models
 - Integration with cloud/network APIs
 
-## License
-MIT License
